@@ -83,6 +83,7 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "outfit_suggestion": None,   # string returned by suggest_outfit
         "fit_card": None,            # string returned by create_fit_card
         "error": None,               # set if the interaction ended early
+        "adjustments": None,         # set if the retry fallback loosened a filter
     }
 
 
@@ -146,6 +147,19 @@ def run_agent(query: str, wardrobe: dict) -> dict:
         size=parsed["size"],
         max_price=parsed["max_price"],
     )
+
+    # Branch C (retry fallback): empty results but a size filter was applied —
+    # retry ONCE with the size filter dropped before giving up, and record it.
+    if not session["search_results"] and parsed["size"] is not None:
+        session["search_results"] = search_listings(
+            description=parsed["description"],
+            size=None,
+            max_price=parsed["max_price"],
+        )
+        if session["search_results"]:
+            session["adjustments"] = (
+                f"No exact matches for size {parsed['size']} — searched all sizes instead."
+            )
 
     if not session["search_results"]:
         # Handled failure: stop before the styling tools, no empty input forwarded.

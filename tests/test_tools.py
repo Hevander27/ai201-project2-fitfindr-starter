@@ -18,6 +18,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from tools import search_listings, suggest_outfit, create_fit_card
+from agent import run_agent
 from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 needs_key = pytest.mark.skipif(
@@ -85,3 +86,22 @@ def test_fit_card_varies_for_same_input():
     a = create_fit_card(outfit, item)
     b = create_fit_card(outfit, item)
     assert a != b  # higher temperature should produce different captions
+
+
+# ── retry fallback (stretch) ──────────────────────────────────────────────────
+
+@needs_key
+def test_retry_drops_size_filter_and_reports_it():
+    # Keyword matches exist, but not in this size — loop should retry and report.
+    session = run_agent("denim jacket size XXS", get_example_wardrobe())
+    assert session["error"] is None
+    assert session["selected_item"] is not None
+    assert session["adjustments"] is not None  # told the user what it loosened
+
+
+def test_retry_still_errors_when_truly_impossible():
+    # Even after dropping size, nothing matches -> still a handled error, no retry note.
+    session = run_agent("designer ballgown size XXS under $5", get_example_wardrobe())
+    assert session["error"] is not None
+    assert session["fit_card"] is None
+    assert session["adjustments"] is None

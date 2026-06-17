@@ -68,6 +68,9 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
         f"Size: {item['size']}\n\n"
         f"{item['description']}"
     )
+    # Stretch: if the retry fallback loosened a filter, tell the user up front.
+    if session.get("adjustments"):
+        listing_text = f"ℹ️ {session['adjustments']}\n\n{listing_text}"
     return listing_text, session["outfit_suggestion"], session["fit_card"]
 
 

@@ -69,6 +69,10 @@ A single `session` dict (built by `_new_session()`) is the source of truth for o
 - **`suggest_outfit` — empty wardrobe:** detects `wardrobe["items"] == []` and switches to a general-advice prompt instead of crashing. Example (tested): for a Y2K baby tee with an empty wardrobe it returned *"This adorable Y2K baby tee is perfect for creating a playful, nostalgic look. Pair it with high-waisted jeans or a flowy …"*. It also catches LLM exceptions and returns a fallback string.
 - **`create_fit_card` — missing outfit:** guards an empty/whitespace `outfit` and returns *"Can't write a fit card without an outfit suggestion — no styling details were provided."* (a string, not an exception). LLM errors are caught and produce a simple fallback caption.
 
+## Stretch Feature: Retry Logic with Fallback
+
+If `search_listings` returns no results **but a size filter was applied**, the planning loop automatically retries **once** with the size filter dropped (keeping the keywords and price ceiling). If the retry succeeds, the agent continues normally and records what it loosened in `session["adjustments"]`; the UI prepends a note like *"No exact matches for size XXS — searched all sizes instead."* to the listing panel. If the retry still finds nothing, it falls through to the normal handled-error path. Covered by `test_retry_drops_size_filter_and_reports_it` and `test_retry_still_errors_when_truly_impossible`.
+
 ## Spec Reflection
 
 - **How the spec helped:** Writing the tool specs in `planning.md` before coding meant the failure modes were decided up front. Because I had already specified "`search_listings` returns `[]`, the loop sets `error` and returns early," the planning loop's branching logic was obvious to implement — there was no ambiguity about who owns each failure.

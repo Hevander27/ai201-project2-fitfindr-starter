@@ -78,8 +78,10 @@ The loop is a sequence of guarded steps driven by what each tool returns, sharin
 
 1. **Parse** the natural-language query into `description`, `size`, and `max_price` (regex for `$NN` / "under $NN" prices and "size X" / standalone size tokens; remaining words become the description). Store in `session["parsed"]`.
 2. **Call `search_listings(description, size, max_price)`** and store `session["search_results"]`.
-   - **Branch A — `results == []`:** set `session["error"]` to a helpful relax-your-filters message and `return session` immediately. `suggest_outfit` and `create_fit_card` are **not** called.
+   - **Branch C (retry, evaluated first) — `results == []` and a size filter was applied (`parsed["size"]` is not None):** before giving up, retry `search_listings` **once** with `size=None` (keeping the same `description` and `max_price`). Record what was loosened in `session["adjustments"]` (e.g. *"No exact matches for size M — searched all sizes instead."*). If the retry returns results, proceed as Branch B; if it still returns `[]`, fall through to Branch A.
+   - **Branch A — `results == []` (after any retry):** set `session["error"]` to a helpful relax-your-filters message and `return session` immediately. `suggest_outfit` and `create_fit_card` are **not** called.
    - **Branch B — `results` non-empty:** set `session["selected_item"] = results[0]` (top-ranked) and continue.
+
 3. **Call `suggest_outfit(selected_item, wardrobe)`**, store `session["outfit_suggestion"]`. This tool internally branches on whether the wardrobe is empty (general advice vs. wardrobe-specific outfits).
 4. **Call `create_fit_card(outfit_suggestion, selected_item)`**, store `session["fit_card"]`. This tool internally branches on whether the outfit string is empty.
 5. **Return** the completed `session`.
@@ -100,6 +102,7 @@ A single `session` dict (created by `_new_session()` in `agent.py`) is the singl
 - `outfit_suggestion` — string from `suggest_outfit`; passed directly into `create_fit_card`.
 - `fit_card` — final caption string.
 - `error` — set only when the interaction ends early; the UI checks this first.
+- `adjustments` — set only when the retry fallback loosened a filter (stretch feature); the UI prepends it to the listing panel so the user knows what changed.
 
 The data flows in-memory within one `run_agent()` call; nothing is re-typed by the user between steps. `app.py` reads the final `session` to populate the three UI panels.
 
@@ -114,6 +117,7 @@ For each tool, describe the specific failure mode you're handling and what the a
 | search_listings | No results match the query | Returns `[]`. The planning loop sets `session["error"]` to: *"No listings matched 'X'. Try raising your price, removing the size filter, or using broader keywords."* and stops before the styling tools — no empty input is forwarded. |
 | suggest_outfit | Wardrobe is empty (`items == []`) | Detects the empty list and switches to a general-styling-advice prompt, returning useful tips (what to pair, what vibe it suits) instead of crashing or returning an empty string. Also catches LLM errors and returns a plain fallback string. |
 | create_fit_card | Outfit input is missing or incomplete | Guards against an empty/whitespace `outfit` and returns a descriptive error string: *"Can't write a fit card without an outfit suggestion."* Also catches LLM errors and returns a simple caption built from the item fields. |
+| search_listings (stretch: retry) | No results, but a size filter was applied | Before erroring, the loop automatically retries once with the size filter dropped, records the change in `session["adjustments"]`, and the UI tells the user what was loosened (e.g. *"No exact matches for size M — searched all sizes instead."*). |
 
 ---
 
