@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python --version)",
+      "Bash(python -c \"import json; d=json.load\\(open\\('data/listings.json'\\)\\); print\\('count:',len\\(d\\)\\); print\\(json.dumps\\(d[0],indent=2\\)\\)\")",
+      "Bash(python -c \"import json; d=json.load\\(open\\('data/wardrobe_schema.json'\\)\\); print\\('top keys:', list\\(d.keys\\(\\)\\)\\); print\\('example items count:', len\\(d['example_wardrobe']['items']\\)\\); import json as j; print\\(j.dumps\\(d['example_wardrobe']['items'][0],indent=2\\)\\); print\\('empty:', d['empty_wardrobe']\\)\")",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest tests/ -q)",
+      "Bash(.venv/bin/python -c \"from dotenv import load_dotenv; import os; load_dotenv\\(\\); print\\('GROQ_API_KEY set' if os.environ.get\\('GROQ_API_KEY'\\) else 'GROQ_API_KEY MISSING'\\)\")",
+      "Bash(.venv/bin/python agent.py)",
+      "Bash(.venv/bin/python -c \"import app; print\\('app builds:', app.build_interface\\(\\) is not None\\)\")"
+    ]
+  }
+}

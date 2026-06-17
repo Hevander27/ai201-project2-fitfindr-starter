@@ -1,61 +1,80 @@
-# FitFindr — Starter Kit
+# FitFindr 🛍️
 
-This starter kit contains everything you need to begin Project 2.
-
-## What's Included
-
-```
-ai201-project2-fitfindr-starter/
-├── data/
-│   ├── listings.json          # 40 mock secondhand listings
-│   └── wardrobe_schema.json   # Wardrobe format + example wardrobe
-├── utils/
-│   └── data_loader.py         # Helper functions for loading the data
-├── planning.md                # Your planning template — fill this out first
-└── requirements.txt           # Python dependencies
-```
+A multi-tool AI agent that helps you find secondhand clothing and figure out how to wear it. Describe what you want in plain language; FitFindr searches a mock listings dataset, styles the best match against your wardrobe, and writes a shareable caption for the look.
 
 ## Setup
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Set your Groq API key in a `.env` file (get a free key at [console.groq.com](https://console.groq.com)):
+Create a `.env` file in the repo root (never commit it — it's gitignored):
+
 ```
 GROQ_API_KEY=your_key_here
 ```
 
-## The Mock Listings Dataset
+## Run
 
-`data/listings.json` contains 40 mock secondhand listings across categories (tops, bottoms, outerwear, shoes, accessories) and styles (vintage, y2k, grunge, cottagecore, streetwear, and more).
-
-Each listing has: `id`, `title`, `description`, `category`, `style_tags`, `size`, `condition`, `price`, `colors`, `brand`, and `platform`.
-
-Load it with:
-```python
-from utils.data_loader import load_listings
-listings = load_listings()
+```bash
+python app.py            # launches the Gradio UI (URL printed in terminal)
+python agent.py          # CLI happy-path + no-results demo
+pytest tests/            # runs the tool tests
 ```
 
-## The Wardrobe Schema
+---
 
-`data/wardrobe_schema.json` defines the format your agent uses to represent a user's existing wardrobe. It includes:
+## Tool Inventory
 
-- `schema`: field definitions for a wardrobe item
-- `example_wardrobe`: a sample wardrobe with 10 items you can use for testing
-- `empty_wardrobe`: a starting template for a new user
+| Tool | Inputs | Output | Purpose |
+|------|--------|--------|---------|
+| `search_listings` | `description` (str), `size` (str \| None), `max_price` (float \| None) | `list[dict]` of full listing dicts (`id`, `title`, `description`, `category`, `style_tags`, `size`, `condition`, `price`, `colors`, `brand`, `platform`), ranked by relevance; `[]` if none match | Find secondhand items matching keywords, size, and a price ceiling |
+| `suggest_outfit` | `new_item` (dict), `wardrobe` (dict) | `str` — 2–4 sentence outfit suggestion | Style the found item against the user's wardrobe (or give general advice if the wardrobe is empty) |
+| `create_fit_card` | `outfit` (str), `new_item` (dict) | `str` — short shareable caption | Write a casual, social-media-style caption for the look; varies per run |
 
-Load an example wardrobe with:
-```python
-from utils.data_loader import get_example_wardrobe
-wardrobe = get_example_wardrobe()
-```
+The documented inputs/outputs match the actual function signatures in `tools.py`.
 
-## Where to Start
+## How the Planning Loop Works
 
-1. **Read `planning.md` and fill it out before writing any code.**
-2. Verify the data loads correctly by running `python utils/data_loader.py`.
-3. Build and test each tool individually before connecting them through your planning loop.
+The loop (`run_agent()` in `agent.py`) is a sequence of **guarded steps** that share one `session` dict, and its behavior changes based on what each tool returns:
 
-Your implementation files go in this same directory. There's no required file structure for your agent code — organize it however makes sense for your design.
+1. **Parse** the natural-language query into `description`, `size`, and `max_price` using regex (`_parse_query()`): "under $30" / "$30" → price ceiling, "size M" / a standalone size token → size, remaining words → description.
+2. **`search_listings(...)`** runs, and the loop **branches on the result**:
+   - **No results (`[]`):** set `session["error"]` with a helpful "relax your filters" message and **return early** — the styling tools are never called with empty input.
+   - **Results found:** set `session["selected_item"] = results[0]` (top-ranked) and continue.
+3. **`suggest_outfit(selected_item, wardrobe)`** → stored in `session["outfit_suggestion"]`.
+4. **`create_fit_card(outfit_suggestion, selected_item)`** → stored in `session["fit_card"]`.
+5. **Return** the session.
+
+So an impossible query terminates after step 2 with only `error` set, while a valid query runs all three tools — the agent does not call a fixed sequence regardless of context.
+
+## State Management
+
+A single `session` dict (built by `_new_session()`) is the source of truth for one interaction. Each tool's output is written to a named field, and the next tool reads from that field — the user never re-enters anything:
+
+- `parsed` → search parameters extracted from the query
+- `search_results` → list from `search_listings`
+- `selected_item` → `search_results[0]`; **this exact dict** is passed into both `suggest_outfit` and `create_fit_card`
+- `outfit_suggestion` → string from `suggest_outfit`, passed straight into `create_fit_card`
+- `fit_card` → final caption
+- `error` → set only on early termination; the UI checks this first
+
+`app.py` reads the completed `session` to populate the three output panels.
+
+## Error Handling (per tool)
+
+- **`search_listings` — no matches:** returns `[]` (never raises). The loop sets `session["error"]`, e.g. *"No listings matched 'designer ballgown', size XXS, under $5. Try raising your price, removing the size filter, or using broader keywords."* and stops before the styling tools.
+- **`suggest_outfit` — empty wardrobe:** detects `wardrobe["items"] == []` and switches to a general-advice prompt instead of crashing. Example (tested): for a Y2K baby tee with an empty wardrobe it returned *"This adorable Y2K baby tee is perfect for creating a playful, nostalgic look. Pair it with high-waisted jeans or a flowy …"*. It also catches LLM exceptions and returns a fallback string.
+- **`create_fit_card` — missing outfit:** guards an empty/whitespace `outfit` and returns *"Can't write a fit card without an outfit suggestion — no styling details were provided."* (a string, not an exception). LLM errors are caught and produce a simple fallback caption.
+
+## Spec Reflection
+
+- **How the spec helped:** Writing the tool specs in `planning.md` before coding meant the failure modes were decided up front. Because I had already specified "`search_listings` returns `[]`, the loop sets `error` and returns early," the planning loop's branching logic was obvious to implement — there was no ambiguity about who owns each failure.
+- **Where implementation diverged:** The spec assumed clean size strings, but the dataset has messy sizes like `"S/M"`, `"W30 L30"`, and `"US 8"`. I added a token-aware `_size_matches()` helper (split on `/` and spaces, plus a substring fallback) so `"M"` correctly matches `"S/M"` — a detail the original spec glossed over.
+
+## AI Usage
+
+1. **Tool implementations (Milestone 3):** I gave Claude each tool's spec block from `planning.md` (inputs, return value, failure mode) plus the field list from `utils/data_loader.py`, and asked it to implement the functions in `tools.py` using `load_listings()` and the Groq client. I reviewed the generated `search_listings` against the spec and confirmed it filtered by all three parameters and returned `[]` (not an error) on no match; I added the token-aware size matching after noticing the dataset's irregular size strings. Verified with `pytest tests/`.
+2. **Planning loop (Milestone 4):** I gave Claude the architecture diagram and the Planning Loop + State Management sections and asked it to implement `run_agent()`. I checked that it branched on the `search_listings` result (early return on `[]`) and stored `selected_item` once so the same dict flowed into both styling tools, then verified the happy path and no-results path with `python agent.py`.

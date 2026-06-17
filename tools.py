@@ -13,6 +13,7 @@ Tools:
 """
 
 import os
+import re
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -20,6 +21,8 @@ from groq import Groq
 from utils.data_loader import load_listings
 
 load_dotenv()
+
+MODEL = "llama-3.3-70b-versatile"
 
 
 # ── Groq client ───────────────────────────────────────────────────────────────
@@ -32,6 +35,28 @@ def _get_groq_client():
             "GROQ_API_KEY not set. Add it to a .env file in the project root."
         )
     return Groq(api_key=api_key)
+
+
+def _llm(prompt: str, temperature: float = 0.7) -> str:
+    """Call the Groq chat model and return the response text."""
+    client = _get_groq_client()
+    resp = client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+    )
+    return resp.choices[0].message.content.strip()
+
+
+def _size_matches(requested: str, listing_size: str) -> bool:
+    """Case-insensitive, token-aware size match. 'M' matches 'S/M'."""
+    req = requested.strip().lower()
+    if not req:
+        return True
+    listing = listing_size.lower()
+    # token match on slash/space-separated parts, plus a substring fallback
+    tokens = re.split(r"[\s/]+", listing)
+    return req in tokens or req in listing
 
 
 # ── Tool 1: search_listings ───────────────────────────────────────────────────
@@ -69,8 +94,38 @@ def search_listings(
 
     Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+    listings = load_listings()
+
+    # 1. Tokenize the search keywords (ignore very short noise words).
+    keywords = [w for w in re.findall(r"[a-z0-9]+", description.lower()) if len(w) > 2]
+
+    scored = []
+    for item in listings:
+        # 2. Hard filters: price ceiling and size.
+        if max_price is not None and item["price"] > max_price:
+            continue
+        if size is not None and not _size_matches(size, item["size"]):
+            continue
+
+        # 3. Score by keyword overlap across the searchable text fields.
+        haystack = " ".join([
+            item["title"],
+            item["description"],
+            item["category"],
+            " ".join(item["style_tags"]),
+            " ".join(item["colors"]),
+            item["brand"] or "",
+        ]).lower()
+
+        score = sum(1 for kw in keywords if kw in haystack)
+
+        # 4. Drop anything with no keyword overlap.
+        if score > 0:
+            scored.append((score, item))
+
+    # 5. Highest score first; return only the listing dicts.
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [item for _, item in scored]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
@@ -100,8 +155,43 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
     Before writing code, fill in the Tool 2 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    item_desc = (
+        f"{new_item['title']} (category: {new_item['category']}, "
+        f"style: {', '.join(new_item['style_tags'])}, "
+        f"colors: {', '.join(new_item['colors'])})"
+    )
+
+    items = wardrobe.get("items", [])
+
+    if not items:
+        # Empty-wardrobe fallback: general styling advice, no specific pieces.
+        prompt = (
+            f"A shopper is considering this secondhand item:\n{item_desc}\n\n"
+            "They have not entered any wardrobe yet. In 2-3 sentences, give "
+            "general styling advice: what kinds of pieces pair well with it, "
+            "what vibe it suits, and how to wear it. Be concrete and friendly."
+        )
+    else:
+        wardrobe_lines = "\n".join(
+            f"- {it['name']} ({it['category']}; {', '.join(it['style_tags'])})"
+            for it in items
+        )
+        prompt = (
+            f"A shopper is considering this secondhand item:\n{item_desc}\n\n"
+            f"Their current wardrobe:\n{wardrobe_lines}\n\n"
+            "Suggest 1-2 complete outfit combinations that pair the new item "
+            "with SPECIFIC pieces named from their wardrobe above. Keep it to "
+            "2-4 sentences total, concrete and conversational."
+        )
+
+    try:
+        return _llm(prompt, temperature=0.7)
+    except Exception as exc:  # noqa: BLE001 - keep the agent usable on LLM failure
+        return (
+            f"Couldn't generate a styling suggestion right now ({exc}). "
+            f"As a starting point, {new_item['title']} works well with simple, "
+            "neutral basics that let it stand out."
+        )
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -133,5 +223,29 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
 
     Before writing code, fill in the Tool 3 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    # 1. Guard against an empty or whitespace-only outfit string.
+    if not outfit or not outfit.strip():
+        return (
+            "Can't write a fit card without an outfit suggestion — "
+            "no styling details were provided."
+        )
+
+    prompt = (
+        "Write a short, casual Instagram/TikTok caption (2-4 sentences) for a "
+        "thrifted outfit. Sound like a real person posting their fit, NOT a "
+        "product description. Mention the item name, price, and platform "
+        "naturally (once each). Capture the vibe in specific terms. Emojis ok.\n\n"
+        f"Item: {new_item['title']}\n"
+        f"Price: ${new_item['price']}\n"
+        f"Platform: {new_item['platform']}\n"
+        f"Outfit: {outfit}"
+    )
+
+    try:
+        # Higher temperature so the same item yields different captions.
+        return _llm(prompt, temperature=1.0)
+    except Exception as exc:  # noqa: BLE001 - return a usable caption on failure
+        return (
+            f"thrifted this {new_item['title']} off {new_item['platform']} for "
+            f"${new_item['price']} and i'm obsessed 🛍️ (caption generator hiccuped: {exc})"
+        )
