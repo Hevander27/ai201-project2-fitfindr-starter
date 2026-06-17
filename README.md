@@ -2,7 +2,7 @@
 
 A multi-tool AI agent that helps you find secondhand clothing and figure out how to wear it. Describe what you want in plain language; FitFindr searches a mock listings dataset, styles the best match against your wardrobe, and writes a shareable caption for the look.
 
-<blockquote class="imgur-embed-pub" lang="en" data-id="a/BTXDC9o"  ><a href="//imgur.com/a/BTXDC9o">FitFindr</a></blockquote><script async src="//s.imgur.com/min/embed.js" charset="utf-8"></script>
+<blockquote class="imgur-embed-pub" lang="en" data-id="a/BTXDC9o"  ><a href="//imgur.com/a/BTXDC9o">FitFindr</a></blockquote>
 
 ## Setup
 
